@@ -171,6 +171,13 @@ flowchart LR
 
 ---
 
+## Example Output 
+
+<img width="1356" height="353" alt="image" src="https://github.com/user-attachments/assets/77a431b1-b7cf-4355-91be-8e45068dfc06" />
+
+
+---
+
 ## Contributing
 
 Issues and pull requests are welcome. When adding guardrail rules, include a short `description` and a clear `reason` string for the verdict column.
