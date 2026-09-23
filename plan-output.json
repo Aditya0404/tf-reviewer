@@ -1,0 +1,99 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.5",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.payments_primary",
+      "type": "aws_db_instance",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": {"instance_class": "db.r6g.2xlarge", "engine_version": "15.4", "deletion_protection": true},
+        "after":  {"instance_class": "db.r6g.2xlarge", "engine_version": "16.2", "deletion_protection": true},
+        "replace_paths": [["engine_version"]]
+      }
+    },
+    {
+      "address": "aws_security_group_rule.gateway_ingress_443",
+      "type": "aws_security_group_rule",
+      "change": {
+        "actions": ["delete"],
+        "before": {"type": "ingress", "from_port": 443, "to_port": 443, "cidr_blocks": ["0.0.0.0/0"]},
+        "after": null
+      }
+    },
+    {
+      "address": "module.eks.aws_eks_node_group.workers",
+      "module_address": "module.eks",
+      "type": "aws_eks_node_group",
+      "change": {
+        "actions": ["create", "delete"],
+        "before": {"instance_types": ["m6i.xlarge"], "scaling_config": [{"desired_size": 12}]},
+        "after":  {"instance_types": ["m7i.xlarge"], "scaling_config": [{"desired_size": 12}]},
+        "replace_paths": [["instance_types"]]
+      }
+    },
+    {
+      "address": "aws_iam_policy.deployer",
+      "type": "aws_iam_policy",
+      "change": {
+        "actions": ["update"],
+        "before": {"policy": "{\"Statement\":[{\"Action\":[\"ecs:UpdateService\"],\"Effect\":\"Allow\",\"Resource\":\"*\"}]}"},
+        "after":  {"policy": "{\"Statement\":[{\"Action\":[\"ecs:*\",\"iam:PassRole\"],\"Effect\":\"Allow\",\"Resource\":\"*\"}]}"}
+      }
+    },
+    {
+      "address": "aws_s3_bucket.merchant_exports",
+      "type": "aws_s3_bucket",
+      "change": {
+        "actions": ["update"],
+        "before": {"bucket": "rzp-merchant-exports-prod", "force_destroy": false, "tags": {"team": "data"}},
+        "after":  {"bucket": "rzp-merchant-exports-prod", "force_destroy": true,  "tags": {"team": "data"}}
+      }
+    },
+    {
+      "address": "aws_lambda_function.webhook_retry",
+      "type": "aws_lambda_function",
+      "change": {
+        "actions": ["update"],
+        "before": {"memory_size": 512, "timeout": 30, "tags": {"team": "payments"}},
+        "after":  {"memory_size": 512, "timeout": 30, "tags": {"team": "payments", "cost-center": "pg-1204"}}
+      }
+    },
+    {
+      "address": "aws_cloudwatch_log_group.api",
+      "type": "aws_cloudwatch_log_group",
+      "change": {
+        "actions": ["no-op"],
+        "before": {"retention_in_days": 30},
+        "after":  {"retention_in_days": 30}
+      }
+    },
+    {
+      "address": "aws_sqs_queue.alerts_dlq",
+      "type": "aws_sqs_queue",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "alerts-dlq", "message_retention_seconds": 1209600}
+      }
+    },
+    {
+      "address": "aws_route53_record.api",
+      "type": "aws_route53_record",
+      "change": {
+        "actions": ["update"],
+        "before": {"name": "api.example.internal", "ttl": 300, "records": ["10.0.12.4"]},
+        "after":  {"name": "api.example.internal", "ttl": 60,  "records": ["10.0.14.9"]}
+      }
+    },
+    {
+      "address": "aws_autoscaling_group.api",
+      "type": "aws_autoscaling_group",
+      "change": {
+        "actions": ["update"],
+        "before": {"min_size": 6, "max_size": 30, "desired_capacity": 12},
+        "after":  {"min_size": 2, "max_size": 30, "desired_capacity": 12}
+      }
+    }
+  ]
+}

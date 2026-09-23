@@ -1,0 +1,148 @@
+# Org guardrails for beautify_plan.py
+#
+# Verdicts are BINARY: every change ends up either `require` (APPROVAL REQUIRED)
+# or `allow` (NO APPROVAL). Evaluation order per resource change:
+#   1. rules (top-to-bottom, first match wins)      -> locked
+#   2. protected_addresses                           -> require, locked
+#   3. defaults[action]                              -> unlocked (LLM may escalate to require)
+# The LLM can never downgrade `require` to `allow`.
+#
+# Requires PyYAML (`pip install pyyaml`). A `.json` file with the same shape is also accepted.
+
+version: 1
+
+# Free-text context prepended to the LLM system prompt. Keep it terse; it is sent on every run.
+org_context: |
+  We are a payments company operating in PCI-DSS scope. Production infrastructure changes
+  need a second approver whenever they can affect customer traffic, money movement,
+  authentication, data durability, or network exposure. DNS is treated as traffic steering
+  and is always high risk. Prefer flagging a change over missing a risk.
+
+verdict_labels:
+  require: "APPROVAL REQUIRED"
+  allow: "NO APPROVAL"
+
+# Rules are evaluated top-to-bottom; the FIRST match wins.
+# All keys inside `match` are AND-ed.
+#   resource_type      exact match on the plan's resource `type`
+#   address_regex      regex searched against the full address
+#   module_regex       regex searched against module_address
+#   action             any of create / update / delete / replace / no-op
+#   attribute          glob(s) matched against CHANGED attribute paths (e.g. tags.team, cidr_blocks)
+#   only_attributes    ALL changed attribute paths must match one of these globs
+#   after_equals       the `after` value of a matched attribute equals this
+#   after_contains_any the `after` value (as text) contains any of these substrings
+#   direction          decrease | increase — numeric compare of before vs after on matched attributes
+rules:
+  - id: tags-only
+    description: Pure tag changes have no runtime impact.
+    match:
+      only_attributes: ["tags.*", "tags_all.*"]
+    verdict: allow
+    reason: "tag-only change; no runtime impact"
+    severity: low
+
+  - id: dns-any-change
+    description: Any Route53 / DNS change needs a second approval (traffic steering, cert validation, failover).
+    match:
+      resource_type: [aws_route53_record, aws_route53_zone, aws_route53_health_check]
+      action: [create, update, delete, replace]
+    verdict: require
+    reason: "DNS change can redirect or blackhole customer traffic"
+    severity: high
+
+  - id: sg-rule-removed
+    description: Deleting or replacing an SG rule can silently cut traffic to attached resources.
+    match:
+      resource_type: [aws_security_group_rule, aws_security_group, aws_vpc_security_group_ingress_rule, aws_vpc_security_group_egress_rule]
+      action: [delete, replace]
+    verdict: require
+    reason: "attached resources may stop receiving matching traffic"
+    severity: high
+
+  - id: sg-open-to-world
+    description: Opening a security group to the internet.
+    match:
+      resource_type: [aws_security_group_rule, aws_security_group, aws_vpc_security_group_ingress_rule]
+      action: [create, update]
+      attribute: ["cidr_blocks*", "ipv6_cidr_blocks*", "cidr_ipv4", "cidr_ipv6", "ingress*"]
+      after_contains_any: ["0.0.0.0/0", "::/0"]
+    verdict: require
+    reason: "exposes port(s) to the public internet"
+    severity: critical
+
+  - id: iam-widening
+    description: Wildcard actions or PassRole widen privilege.
+    match:
+      attribute: ["policy", "*policy", "*_policy*", "inline_policy*"]
+      after_contains_any: ['"*"', ':*"', "iam:PassRole", "sts:AssumeRole"]
+    verdict: require
+    reason: "IAM policy widened with wildcard or PassRole"
+    severity: critical
+
+  - id: datastore-destructive
+    description: Replacing or deleting a data store risks downtime and data loss.
+    match:
+      resource_type: [aws_db_instance, aws_rds_cluster, aws_rds_cluster_instance, aws_elasticache_cluster, aws_elasticache_replication_group, aws_dynamodb_table, aws_msk_cluster]
+      action: [replace, delete]
+    verdict: require
+    reason: "data-store replace/delete risks downtime and data loss"
+    severity: critical
+
+
+  - id: s3-force-destroy
+    match:
+      resource_type: [aws_s3_bucket]
+      attribute: ["force_destroy"]
+      after_equals: true
+    verdict: require
+    reason: "force_destroy=true lets bucket contents be wiped on deleted wndfjbenfjnwef"
+    severity: high
+
+  - id: capacity-reduction
+    match:
+      resource_type: [aws_autoscaling_group, aws_eks_node_group, aws_ecs_service]
+      attribute: ["min_size", "desired_capacity", "desired_count", "scaling_config*"]
+      direction: decrease
+    verdict: require
+    reason: "capacity reduction may under-provision under load"
+    severity: medium
+
+  - id: log-retention-shortened
+    match:
+      resource_type: [aws_cloudwatch_log_group]
+      attribute: ["retention_in_days"]
+      direction: decrease
+    verdict: require
+    reason: "shorter log retention weakens audit trail"
+    severity: medium
+
+  - id: additive-queue-or-topic
+    description: New queues/topics/log groups are additive and low risk.
+    match:
+      resource_type: [aws_sqs_queue, aws_sns_topic, aws_cloudwatch_log_group]
+      action: [create]
+    verdict: allow
+    reason: "additive resource; no impact on existing traffic"
+    severity: low
+
+# Resources/modules that are always high blast radius. Forces `require` when no rule matched.
+protected_addresses:
+  - '^aws_db_instance\.payments_.*'
+  - '^module\.eks\..*'
+  - '^aws_kms_key\..*'
+
+# Fallback when no rule / protected address matched. Conservative for a payments org:
+# unclassified updates still get a second pair of eyes.
+defaults:
+  create: allow
+  update: require
+  delete: require
+  replace: require
+  no-op: allow
+
+# Extra hints the LLM may use for SUMMARY wording only (never verdicts).
+summary_hints:
+  - "Say 'ingress' or 'egress' explicitly for security-group rules."
+  - "For IAM, list added actions with '+' and removed with '-'."
+  - "For capacity, show the numeric before→after (e.g. 'min 6→2')."
